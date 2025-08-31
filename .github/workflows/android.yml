@@ -14,7 +14,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java 17 (needed by sdkmanager)
+      # sdkmanager terbaru butuh JDK 17
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -23,48 +24,46 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android packages
+      # >>> KUNCI SOLUSI <<< : pre-install paket yang sering bikin nyangkut
+      - name: Accept licenses & install SDK packages
         run: |
-          sdkmanager --install "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+          yes | sdkmanager --licenses
+          sdkmanager --install \
+            "cmdline-tools;latest" \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.2" \
+            "build-tools;30.0.3"
 
-      # === Fix inti: unzip kalau repo berisi .zip, lalu deteksi folder project Android ===
+      # Kalau kamu commit ZIP doang, step ini akan auto-unzip & cari folder project Android
       - name: Prepare project (unzip if repo contains a zip) & detect project dir
         shell: bash
         run: |
           set -e
-          echo "List root repo:"
-          ls -la
-
-          # Kalau ada zip di root repo, unzip dulu (ambil yang pertama saja)
           if ls *.zip >/dev/null 2>&1; then
-            ZIPFILE="$(ls *.zip | head -n1)"
-            echo "Found ZIP: $ZIPFILE -> unzip..."
-            unzip -o "$ZIPFILE" -d .
+            unzip -o "$(ls *.zip | head -n1)" -d .
           fi
-
-          # Deteksi lokasi settings.gradle (root atau subfolder)
           if [ -f settings.gradle ] || [ -f settings.gradle.kts ]; then
             PROJECT_DIR="."
           else
             CANDIDATE="$(find . -maxdepth 2 -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) | head -n1)"
-            if [ -z "$CANDIDATE" ]; then
-              echo "::error::Tidak menemukan settings.gradle. Pastikan project Android-nya diextract (bukan hanya ZIP)."
-              exit 1
-            fi
+            [ -z "$CANDIDATE" ] && { echo "::error::settings.gradle tidak ditemukan"; exit 1; }
             PROJECT_DIR="$(dirname "$CANDIDATE")"
           fi
-
           echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
-          echo "Detected PROJECT_DIR: $PROJECT_DIR"
-          echo "Tree proyek:"
+          echo "Using PROJECT_DIR=$PROJECT_DIR"
           ls -la "$PROJECT_DIR"
 
-      - name: Build debug APK (Gradle 7.6.1)
+      - name: Build debug APK (Gradle 7.6.1) with verbose logs
         uses: gradle/gradle-build-action@v3
         with:
           gradle-version: 7.6.1
-          arguments: assembleDebug
           build-root-directory: ${{ env.PROJECT_DIR }}
+          arguments: >
+            --warning-mode all
+            --stacktrace
+            --info
+            assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
